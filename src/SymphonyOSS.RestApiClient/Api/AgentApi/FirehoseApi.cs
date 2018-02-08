@@ -36,6 +36,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         private ILogger _log;
 
         private readonly Generated.OpenApi.AgentApi.FirehoseClient _firehoseApi;
+        private readonly IAuthTokens authTokens;
+        private readonly IApiExecutor apiExecutor;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="FirehoseApi" /> class.
@@ -46,10 +48,11 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         /// <param name="configuration">Api configuration.</param>
         /// <param name="apiExecutor">Execution strategy.</param>
         public FirehoseApi(IAuthTokens authTokens, string baseUrl, HttpClient httpClient, IApiExecutor apiExecutor)
-            : base(authTokens, apiExecutor)
         {
             _log = ApiLogging.LoggerFactory?.CreateLogger<FirehoseApi>();
             _firehoseApi = new Generated.OpenApi.AgentApi.FirehoseClient(baseUrl, httpClient);
+            this.authTokens = authTokens;
+            this.apiExecutor = apiExecutor;
         }
 
         /// <summary>
@@ -130,8 +133,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         {
             try
             {
-                var firehose = ApiExecutor.Execute(_firehoseApi.V4CreateAsync, AuthTokens.SessionToken,
-                    AuthTokens.KeyManagerToken);
+                var firehose = this.apiExecutor.Execute(_firehoseApi.V4CreateAsync, this.authTokens.SessionToken,
+                    this.authTokens.KeyManagerToken);
                 return firehose.Id;
             }
             catch (Exception e)
@@ -144,8 +147,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         private IEnumerable<V4Event> ReadFirehose(string id, int? maxMessages = null)
         {
 
-            var task = ApiExecutor.ExecuteAsync(() =>
-                _firehoseApi.V4ReadAsync(id, AuthTokens.SessionToken, AuthTokens.KeyManagerToken, maxMessages));
+            var task = this.apiExecutor.ExecuteAsync(() =>
+                _firehoseApi.V4ReadAsync(id, this.authTokens.SessionToken, this.authTokens.KeyManagerToken, maxMessages));
 
             try
             {

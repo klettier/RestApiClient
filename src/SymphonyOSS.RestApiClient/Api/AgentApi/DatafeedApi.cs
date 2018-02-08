@@ -34,7 +34,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
     public class DatafeedApi : AbstractDatafeedApi
     {
         private readonly Generated.OpenApi.AgentApi.DatafeedClient  _datafeedApi;
-
+        private readonly IAuthTokens authTokens;
+        private readonly IApiExecutor apiExecutor;
         private ILogger _log;
         /// <summary>
         /// Initializes a new instance of the <see cref="DatafeedApi" /> class.
@@ -44,10 +45,12 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         /// <param name="authTokens">Authentication tokens.</param>
         /// <param name="configuration">Api configuration.</param>
         /// <param name="apiExecutor">Execution strategy.</param>
-        public DatafeedApi(IAuthTokens authTokens, string baseUrl, HttpClient httpClient, IApiExecutor apiExecutor) : base(authTokens, apiExecutor)
+        public DatafeedApi(IAuthTokens authTokens, string baseUrl, HttpClient httpClient, IApiExecutor apiExecutor)
         {
             _datafeedApi = new Generated.OpenApi.AgentApi.DatafeedClient(baseUrl, httpClient);
             _log = ApiLogging.LoggerFactory?.CreateLogger<DatafeedApi>();
+            this.authTokens = authTokens;
+            this.apiExecutor = apiExecutor;
         }
 
         /// <summary>
@@ -128,7 +131,7 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         {
             try
             {
-                var datafeed = ApiExecutor.Execute(_datafeedApi.V4CreateAsync, AuthTokens.SessionToken, AuthTokens.KeyManagerToken);
+                var datafeed = this.apiExecutor.Execute(_datafeedApi.V4CreateAsync, this.authTokens.SessionToken, this.authTokens.KeyManagerToken);
                 return datafeed.Id;
             }
             catch (Exception e)
@@ -142,8 +145,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         {
             _log?.LogDebug("Waiting for messages on datafeed id = {id}", id);
 
-            var task = ApiExecutor.ExecuteAsync(() =>
-                _datafeedApi.V4ReadAsync(id, AuthTokens.SessionToken, AuthTokens.KeyManagerToken, maxMessages));
+            var task = this.apiExecutor.ExecuteAsync(() =>
+                _datafeedApi.V4ReadAsync(id, this.authTokens.SessionToken, this.authTokens.KeyManagerToken, maxMessages));
 
             try
             {

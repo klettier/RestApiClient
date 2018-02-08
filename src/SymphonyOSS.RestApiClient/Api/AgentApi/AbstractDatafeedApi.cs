@@ -21,12 +21,13 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
     using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Threading.Tasks;
-    using Authentication;
     using Factories;
     using Generated.OpenApi.AgentApi;
     using Entities;
     using Microsoft.Extensions.Logging;
     using SymphonyOSS.RestApiClient.Logging;
+    using System.ComponentModel;
+    using System.Collections.ObjectModel;
 
     /// <summary>
     /// Abstract superclass for datafeed-type Apis, eg <see cref="Generated.OpenApi.AgentApi.Api.DatafeedApi"/>
@@ -34,15 +35,79 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
     /// </summary>
     public abstract class AbstractDatafeedApi
     {
+        /// <summary>
+        /// True if currently listening for incoming messages, false if not.
+        /// </summary>
+        public bool Listening { get; protected set; }
+
+        public event EventHandler<MessageEventArgs> OnMessage
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onMessage, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onMessage, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
+        public event EventHandler<ConnectionAcceptedEventArgs> OnConnectionAccepted
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onConnectionAccepted, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onConnectionAccepted, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
+        public event EventHandler<ConnectionRequestedEventArgs> OnConnectionRequested
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onConnectionRequested, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onConnectionRequested, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
+        public event EventHandler<UserJoinedRoomEventArgs> OnUserJoinedRoom
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onUserJoinedRoom, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onUserJoinedRoom, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
         private ILogger Log;
 
-        protected readonly IAuthTokens AuthTokens;
-
-        protected readonly IApiExecutor ApiExecutor;
+        //https://docs.microsoft.com/en-us/dotnet/standard/events/how-to-handle-multiple-events-using-event-properties
+        protected EventHandlerList listEventDelegates = new EventHandlerList();
+        static readonly object onConnectionAccepted = new object();
+        static readonly object onConnectionRequested = new object();
+        static readonly object onMessage = new object();
+        static readonly object onUserJoinedRoom = new object();
 
         protected volatile bool ShouldStop;
-
         private readonly ConcurrentDictionary<Delegate, Task> _inflightEvents = new ConcurrentDictionary<Delegate, Task>();
+        readonly IReadOnlyDictionary<V4EventType, Action<V4Event>> whatToDo;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DatafeedApi" /> class.
@@ -51,62 +116,20 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         /// </summary>
         /// <param name="authTokens">Authentication tokens.</param>
         /// <param name="apiExecutor">Execution strategy.</param>
-        protected AbstractDatafeedApi(IAuthTokens authTokens, IApiExecutor apiExecutor)
+        protected AbstractDatafeedApi()
         {
             Log = ApiLogging.LoggerFactory?.CreateLogger<AbstractDatafeedApi>();
 
-            AuthTokens = authTokens;
-            ApiExecutor = apiExecutor;
-        }
-
-        /// <summary>
-        /// True if currently listening for incoming messages, false if not.
-        /// </summary>
-        public bool Listening { get; protected set; }
-
-        private event EventHandler<MessageEventArgs> _onMessage;
-        public event EventHandler<MessageEventArgs> OnMessage
-        {
-            add
-            {
-                _onMessage += value;
-            }
-            remove
-            {
-                _onMessage -= value;
-                Task t;
-                _inflightEvents.TryRemove(value, out t);
-            }
-        }
-
-        private event EventHandler<ConnectionRequestedEventArgs> _onConnectionRequested;
-        public event EventHandler<ConnectionRequestedEventArgs> OnConnectionRequested
-        {
-            add
-            {
-                _onConnectionRequested += value;
-            }
-            remove
-            {
-                _onConnectionRequested -= value;
-                Task t;
-                _inflightEvents.TryRemove(value, out t);
-            }
-        }
-
-        private event EventHandler<ConnectionAcceptedEventArgs> _onConnectionAccepted;
-        public event EventHandler<ConnectionAcceptedEventArgs> OnConnectionAccepted
-        {
-            add
-            {
-                _onConnectionAccepted += value;
-            }
-            remove
-            {
-                _onConnectionAccepted -= value;
-                Task t;
-                _inflightEvents.TryRemove(value, out t);
-            }
+            whatToDo = new ReadOnlyDictionary<V4EventType, Action<V4Event>>
+            (
+                new Dictionary<V4EventType, Action<V4Event>>
+                {
+                    { V4EventType.MESSAGESENT, message => Fire(message, ToMessage, (EventHandler<MessageEventArgs>)listEventDelegates[onMessage])},
+                    { V4EventType.CONNECTIONREQUESTED, message => Fire(message, ToConnectionRequested, (EventHandler<ConnectionRequestedEventArgs>)listEventDelegates[onConnectionRequested])},
+                    { V4EventType.CONNECTIONACCEPTED, message => Fire(message, ToConnectionAccepted, (EventHandler<ConnectionAcceptedEventArgs>)listEventDelegates[onConnectionAccepted])},
+                    { V4EventType.USERJOINEDROOM, message => Fire(message, ToUserJoinedRoomEventArgs, (EventHandler<UserJoinedRoomEventArgs>)listEventDelegates[onUserJoinedRoom])}
+                }
+            );
         }
 
         /// <summary>
@@ -119,8 +142,7 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
             ShouldStop = true;
         }
 
-        protected Task CreateInvocationTask<EventHandlerArgs>(EventHandler<EventHandlerArgs> evtHandler,
-            EventHandlerArgs args)
+        protected Task CreateInvocationTask<EventHandlerArgs>(EventHandler<EventHandlerArgs> evtHandler, EventHandlerArgs args)
         {
             // we must get the pendingTask first before returning to avoid
             // a race condition where the returned task gets added to 
@@ -161,27 +183,41 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
             }
         }
 
-        protected void FireMessage(V4Message message)
+        private void Fire<T>(V4Event message, Func<V4Event, T> map, EventHandler<T> handler)
         {
-            var eventArgs = new MessageEventArgs(MessageFactory.Create(message));
-            InvokeEventHandlers(_onMessage, eventArgs);
+            var eventArgs = map(message);
+
+            InvokeEventHandlers(handler, eventArgs);
         }
 
-        protected void FireConnectionRequested(V4Event message) {
+        protected MessageEventArgs ToMessage(V4Event message)
+        {
+            return new MessageEventArgs(MessageFactory.Create(message.Payload.MessageSent.Message));
+        }
+
+        protected ConnectionRequestedEventArgs ToConnectionRequested(V4Event message)
+        {
             User fromUser = UserFactory.Create(message.Initiator.User);
             User toUser = UserFactory.Create(message.Payload.ConnectionRequested.ToUser);
 
-            var eventArgs = new ConnectionRequestedEventArgs(fromUser, toUser);
-            InvokeEventHandlers(_onConnectionRequested, eventArgs);
+            return new ConnectionRequestedEventArgs(fromUser, toUser);
         }
 
-        protected void FireConnectionAccepted(V4Event message)
+        protected ConnectionAcceptedEventArgs ToConnectionAccepted(V4Event message)
         {
             User toUser = UserFactory.Create(message.Initiator.User);
             User fromUser = UserFactory.Create(message.Payload.ConnectionAccepted.FromUser);
 
-            var eventArgs = new ConnectionAcceptedEventArgs(fromUser, toUser);
-            InvokeEventHandlers(_onConnectionAccepted, eventArgs);
+            return new ConnectionAcceptedEventArgs(fromUser, toUser);
+        }
+
+        protected UserJoinedRoomEventArgs ToUserJoinedRoomEventArgs(V4Event message)
+        {
+            User initiator = message.Initiator?.User == null ? null : UserFactory.Create(message.Initiator.User);
+            User userThatjoined = UserFactory.Create(message.Payload.UserJoinedRoom.AffectedUser);
+            LiteRoom room = new LiteRoom(message.Payload.UserJoinedRoom.Stream.StreamId, message.Payload.UserJoinedRoom.Stream.RoomName, message.Payload.UserJoinedRoom.Stream.External);
+
+            return new UserJoinedRoomEventArgs(initiator, userThatjoined, room);
         }
 
         protected void ProcessMessageList(IEnumerable<V4Event> messageList)
@@ -193,23 +229,14 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
 
             foreach (var message in messageList)
             {
-                if (message == null)
+                if (message == null ||
+                    !message.Type.HasValue)
                 {
                     continue;
                 }
 
-                switch(message.Type)
-                {
-                    case V4EventType.MESSAGESENT:
-                        FireMessage(message.Payload.MessageSent.Message);
-                        break;
-                    case V4EventType.CONNECTIONREQUESTED:
-                        FireConnectionRequested(message);
-                        break;
-                    case V4EventType.CONNECTIONACCEPTED:
-                        FireConnectionAccepted(message);
-                        break;
-                }
+                whatToDo.TryGetValue(message.Type.Value, out Action<V4Event> action);
+                action?.Invoke(message);
             }
         }
     }

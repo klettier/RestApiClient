@@ -70,4 +70,18 @@ namespace SymphonyOSS.RestApiClient.Entities
             CopyProtected = copyProtected;
         }
     }
+
+    public class LiteRoom
+    {
+        public LiteRoom(string streamId, string name, bool? external)
+        {
+            StreamId = streamId;
+            Name = name;
+            External = external;
+        }
+
+        public string StreamId { get; }
+        public string Name { get; }
+        public bool? External { get; }
+    }
 }
