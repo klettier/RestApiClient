@@ -21,6 +21,7 @@ namespace SymphonyOSS.RestApiClient.Factories
     using System.Collections.Generic;
     using Entities;
     using Generated.OpenApi.PodApi;
+    using SymphonyOSS.RestApiClient.Generated.OpenApi.AgentApi;
 
     public abstract class RoomFactory
     {
@@ -51,6 +52,11 @@ namespace SymphonyOSS.RestApiClient.Factories
                 roomAttributes.Public.Value,
                 roomAttributes.ReadOnly.Value,
                 roomAttributes.CopyProtected.Value);
+        }
+
+        public static LiteRoom Create(V4Stream stream)
+        {
+            return new LiteRoom(stream.StreamId, stream.RoomName, stream.External);
         }
     }
 }

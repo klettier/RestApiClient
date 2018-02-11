@@ -28,6 +28,7 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
     using SymphonyOSS.RestApiClient.Logging;
     using System.ComponentModel;
     using System.Collections.ObjectModel;
+    using static Mapper;
 
     /// <summary>
     /// Abstract superclass for datafeed-type Apis, eg <see cref="Generated.OpenApi.AgentApi.Api.DatafeedApi"/>
@@ -96,6 +97,34 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
             }
         }
 
+        public event EventHandler<UserLeftRoomEventArgs> OnUserLeftRoom
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onUserLeftRoom, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onUserLeftRoom, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
+        public event EventHandler<RoomUpdatedEventArgs> OnRoomUpdated
+        {
+            add
+            {
+                listEventDelegates.AddHandler(onRoomUpdated, value);
+            }
+            remove
+            {
+                listEventDelegates.RemoveHandler(onRoomUpdated, value);
+
+                _inflightEvents.TryRemove(value, out Task t);
+            }
+        }
+
         private ILogger Log;
 
         //https://docs.microsoft.com/en-us/dotnet/standard/events/how-to-handle-multiple-events-using-event-properties
@@ -104,6 +133,8 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
         static readonly object onConnectionRequested = new object();
         static readonly object onMessage = new object();
         static readonly object onUserJoinedRoom = new object();
+        static readonly object onUserLeftRoom = new object();
+        static readonly object onRoomUpdated = new object();
 
         protected volatile bool ShouldStop;
         private readonly ConcurrentDictionary<Delegate, Task> _inflightEvents = new ConcurrentDictionary<Delegate, Task>();
@@ -127,10 +158,13 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
                     { V4EventType.MESSAGESENT, message => Fire(message, ToMessage, (EventHandler<MessageEventArgs>)listEventDelegates[onMessage])},
                     { V4EventType.CONNECTIONREQUESTED, message => Fire(message, ToConnectionRequested, (EventHandler<ConnectionRequestedEventArgs>)listEventDelegates[onConnectionRequested])},
                     { V4EventType.CONNECTIONACCEPTED, message => Fire(message, ToConnectionAccepted, (EventHandler<ConnectionAcceptedEventArgs>)listEventDelegates[onConnectionAccepted])},
-                    { V4EventType.USERJOINEDROOM, message => Fire(message, ToUserJoinedRoomEventArgs, (EventHandler<UserJoinedRoomEventArgs>)listEventDelegates[onUserJoinedRoom])}
+                    { V4EventType.USERJOINEDROOM, message => Fire(message, ToUserJoinedRoom, (EventHandler<UserJoinedRoomEventArgs>)listEventDelegates[onUserJoinedRoom])},
+                    { V4EventType.USERLEFTROOM, message => Fire(message, ToUserLeftRoom, (EventHandler<UserLeftRoomEventArgs>)listEventDelegates[onUserLeftRoom])},
+                    { V4EventType.ROOMUPDATED, message => Fire(message, ToRoomUpdated, (EventHandler<RoomUpdatedEventArgs>)listEventDelegates[onRoomUpdated])}
                 }
             );
         }
+
 
         /// <summary>
         /// Requests that <see cref="Listen"/> should stop blocking and return control
@@ -188,36 +222,6 @@ namespace SymphonyOSS.RestApiClient.Api.AgentApi
             var eventArgs = map(message);
 
             InvokeEventHandlers(handler, eventArgs);
-        }
-
-        protected MessageEventArgs ToMessage(V4Event message)
-        {
-            return new MessageEventArgs(MessageFactory.Create(message.Payload.MessageSent.Message));
-        }
-
-        protected ConnectionRequestedEventArgs ToConnectionRequested(V4Event message)
-        {
-            User fromUser = UserFactory.Create(message.Initiator.User);
-            User toUser = UserFactory.Create(message.Payload.ConnectionRequested.ToUser);
-
-            return new ConnectionRequestedEventArgs(fromUser, toUser);
-        }
-
-        protected ConnectionAcceptedEventArgs ToConnectionAccepted(V4Event message)
-        {
-            User toUser = UserFactory.Create(message.Initiator.User);
-            User fromUser = UserFactory.Create(message.Payload.ConnectionAccepted.FromUser);
-
-            return new ConnectionAcceptedEventArgs(fromUser, toUser);
-        }
-
-        protected UserJoinedRoomEventArgs ToUserJoinedRoomEventArgs(V4Event message)
-        {
-            User initiator = message.Initiator?.User == null ? null : UserFactory.Create(message.Initiator.User);
-            User userThatjoined = UserFactory.Create(message.Payload.UserJoinedRoom.AffectedUser);
-            LiteRoom room = new LiteRoom(message.Payload.UserJoinedRoom.Stream.StreamId, message.Payload.UserJoinedRoom.Stream.RoomName, message.Payload.UserJoinedRoom.Stream.External);
-
-            return new UserJoinedRoomEventArgs(initiator, userThatjoined, room);
         }
 
         protected void ProcessMessageList(IEnumerable<V4Event> messageList)

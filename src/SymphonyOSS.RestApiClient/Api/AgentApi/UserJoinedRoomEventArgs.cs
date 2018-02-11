@@ -4,7 +4,7 @@ using System.Text;
 
 namespace SymphonyOSS.RestApiClient.Api.AgentApi
 {
-   public class UserJoinedRoomEventArgs
+    public class UserJoinedRoomEventArgs
     {
         public UserJoinedRoomEventArgs(Entities.User initiator, Entities.User userThatjoined, Entities.LiteRoom room)
         {
